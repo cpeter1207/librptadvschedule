@@ -1,0 +1,23 @@
+Source: librptadvschedule
+Section: libs
+Priority: optional
+Maintainer: Chris Peterson <cpeter1207@users.noreply.github.com>
+Build-Depends: cargo (>= 1.85), debhelper-compat (= 13), pkg-config, rustc (>= 1.85)
+Standards-Version: 4.7.2
+Homepage: https://github.com/cpeter1207/librptadvschedule
+Rules-Requires-Root: no
+
+Package: librptadvschedule1
+Architecture: any
+Multi-Arch: same
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: generic civil scheduling for rpt_advanced
+ Versioned civil-time recurrence and window calculation ABI for controller consumers.
+
+Package: librptadvschedule-dev
+Architecture: any
+Multi-Arch: same
+Depends: ${misc:Depends}, librptadvschedule1 (= ${binary:Version})
+Description: development files for rpt_advanced scheduling
+ Public C header and pkg-config metadata for dynamic consumers of the
+ generic schedule ABI.

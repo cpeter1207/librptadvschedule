@@ -1,0 +1,3 @@
+usr/include/rptadvschedule/rptadvschedule.h
+usr/lib/*/librptadvschedule.so
+usr/lib/*/pkgconfig/rptadvschedule.pc

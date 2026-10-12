@@ -1,0 +1,554 @@
+//! Deterministic parsers and matchers for local civil-time scheduling.
+
+use std::str::FromStr;
+
+/// A schedule parsing or validation failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScheduleError {
+    /// The supplied value is outside the deliberately small schedule grammar.
+    Invalid,
+}
+
+/// Sunday-zero local weekdays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Weekday {
+    /// Sunday.
+    Sunday = 0,
+    /// Monday.
+    Monday = 1,
+    /// Tuesday.
+    Tuesday = 2,
+    /// Wednesday.
+    Wednesday = 3,
+    /// Thursday.
+    Thursday = 4,
+    /// Friday.
+    Friday = 5,
+    /// Saturday.
+    Saturday = 6,
+}
+
+impl Weekday {
+    fn parse(text: &str) -> Result<Self, ScheduleError> {
+        if text.eq_ignore_ascii_case("sunday") {
+            Ok(Self::Sunday)
+        } else if text.eq_ignore_ascii_case("monday") {
+            Ok(Self::Monday)
+        } else if text.eq_ignore_ascii_case("tuesday") {
+            Ok(Self::Tuesday)
+        } else if text.eq_ignore_ascii_case("wednesday") {
+            Ok(Self::Wednesday)
+        } else if text.eq_ignore_ascii_case("thursday") {
+            Ok(Self::Thursday)
+        } else if text.eq_ignore_ascii_case("friday") {
+            Ok(Self::Friday)
+        } else if text.eq_ignore_ascii_case("saturday") {
+            Ok(Self::Saturday)
+        } else {
+            Err(ScheduleError::Invalid)
+        }
+    }
+}
+
+/// One validated local civil minute, independent of a host time zone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CivilTime {
+    year: u16,
+    month: u8,
+    day: u8,
+    weekday: Weekday,
+    hour: u8,
+    minute: u8,
+}
+
+impl CivilTime {
+    /// Read the validated calendar fields without reparsing or changing civil-time semantics.
+    pub const fn components(self) -> (u16, u8, u8, Weekday, u8, u8) {
+        (
+            self.year,
+            self.month,
+            self.day,
+            self.weekday,
+            self.hour,
+            self.minute,
+        )
+    }
+    /// Construct one validated local civil minute.
+    pub fn new(
+        year: u16,
+        month: u8,
+        day: u8,
+        weekday: Weekday,
+        hour: u8,
+        minute: u8,
+    ) -> Result<Self, ScheduleError> {
+        let date = CivilDate { year, month, day };
+        if !date.valid() || hour >= 24 || minute >= 60 {
+            return Err(ScheduleError::Invalid);
+        }
+        Ok(Self {
+            year,
+            month,
+            day,
+            weekday,
+            hour,
+            minute,
+        })
+    }
+
+    fn minute_of_day(self) -> u16 {
+        u16::from(self.hour) * 60 + u16::from(self.minute)
+    }
+
+    fn occurrence(self) -> u64 {
+        ((((u64::from(self.year) * 13 + u64::from(self.month)) * 32 + u64::from(self.day)) * 24
+            + u64::from(self.hour))
+            * 60)
+            + u64::from(self.minute)
+    }
+
+    fn date_ordinal(self) -> u64 {
+        CivilDate {
+            year: self.year,
+            month: self.month,
+            day: self.day,
+        }
+        .ordinal()
+    }
+}
+
+/// A zero-time local civil trigger.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScheduledEvent {
+    /// Every local day at one minute.
+    Daily {
+        /// Local hour.
+        hour: u8,
+        /// Local minute.
+        minute: u8,
+    },
+    /// One local weekday at one minute.
+    Weekly {
+        /// Selected weekday.
+        weekday: Weekday,
+        /// Local hour.
+        hour: u8,
+        /// Local minute.
+        minute: u8,
+    },
+    /// One local Gregorian date at one minute.
+    Once {
+        /// Gregorian year.
+        year: u16,
+        /// One-based Gregorian month.
+        month: u8,
+        /// One-based Gregorian day.
+        day: u8,
+        /// Local hour.
+        hour: u8,
+        /// Local minute.
+        minute: u8,
+    },
+}
+
+impl ScheduledEvent {
+    /// Return this event's local calendar-minute occurrence when it is due.
+    pub fn occurrence(&self, local: &CivilTime) -> Option<u64> {
+        let matches = match *self {
+            Self::Daily { hour, minute } => local.hour == hour && local.minute == minute,
+            Self::Weekly {
+                weekday,
+                hour,
+                minute,
+            } => local.weekday == weekday && local.hour == hour && local.minute == minute,
+            Self::Once {
+                year,
+                month,
+                day,
+                hour,
+                minute,
+            } => {
+                local.year == year
+                    && local.month == month
+                    && local.day == day
+                    && local.hour == hour
+                    && local.minute == minute
+            }
+        };
+        matches.then(|| local.occurrence())
+    }
+}
+
+impl FromStr for ScheduledEvent {
+    type Err = ScheduleError;
+
+    /// Parse one exact daily, weekly, or one-time local event trigger.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        if let Some(clock) = text.strip_prefix("daily ") {
+            let (hour, minute) = parse_clock(clock)?;
+            return Ok(Self::Daily { hour, minute });
+        }
+        if let Some(rest) = text.strip_prefix("weekly ") {
+            let (weekday, clock) = rest.split_once(' ').ok_or(ScheduleError::Invalid)?;
+            let (hour, minute) = parse_clock(clock)?;
+            return Ok(Self::Weekly {
+                weekday: Weekday::parse(weekday)?,
+                hour,
+                minute,
+            });
+        }
+        if let Some(rest) = text.strip_prefix("once ") {
+            let (date, clock) = rest.split_once(' ').ok_or(ScheduleError::Invalid)?;
+            let date = CivilDate::parse(date)?;
+            let (hour, minute) = parse_clock(clock)?;
+            return Ok(Self::Once {
+                year: date.year,
+                month: date.month,
+                day: date.day,
+                hour,
+                minute,
+            });
+        }
+        Err(ScheduleError::Invalid)
+    }
+}
+
+/// A bounded same-date local civil-time window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScheduledWindow {
+    start_minute: u16,
+    end_minute: u16,
+    weekday_mask: u8,
+    dates: Vec<CivilDate>,
+}
+
+impl ScheduledWindow {
+    /// Whether two bounded same-date windows can be active at the same local civil minute.
+    pub fn overlaps(&self, other: &Self) -> bool {
+        if self.start_minute >= other.end_minute || other.start_minute >= self.end_minute {
+            return false;
+        }
+        match (self.dates.is_empty(), other.dates.is_empty()) {
+            (false, false) => self.dates.iter().any(|date| other.dates.contains(date)),
+            (false, true) => self
+                .dates
+                .iter()
+                .any(|date| other.matches_date_weekday(*date)),
+            (true, false) => other
+                .dates
+                .iter()
+                .any(|date| self.matches_date_weekday(*date)),
+            (true, true) => {
+                selected_weekdays(self.weekday_mask) & selected_weekdays(other.weekday_mask) != 0
+            }
+        }
+    }
+
+    fn matches_date_weekday(&self, date: CivilDate) -> bool {
+        self.weekday_mask == 0 || self.weekday_mask & (1 << date.weekday()) != 0
+    }
+
+    /// Milliseconds until the next selected inclusive start and its date identity.
+    pub(crate) fn next_start(&self, local: &CivilTime, second: u8) -> Option<(u64, u64)> {
+        self.next_boundary(local, second, u64::from(self.start_minute) * 60)
+    }
+
+    /// Milliseconds until the next selected exclusive end and its date identity.
+    pub(crate) fn next_end(&self, local: &CivilTime, second: u8) -> Option<(u64, u64)> {
+        self.next_boundary(local, second, u64::from(self.end_minute) * 60)
+    }
+
+    fn next_boundary(
+        &self,
+        local: &CivilTime,
+        second: u8,
+        target_second: u64,
+    ) -> Option<(u64, u64)> {
+        if second >= 60 {
+            return None;
+        }
+        let today = local.date_ordinal();
+        let current_second = u64::from(local.minute_of_day()) * 60 + u64::from(second);
+        if !self.dates.is_empty() {
+            return self
+                .dates
+                .iter()
+                .filter_map(|date| {
+                    let date = date.ordinal();
+                    let days = date.checked_sub(today)?;
+                    // Valid years 1..=9999 bound this sum below 315_537_897_600 seconds.
+                    let remaining = (days * 86_400 + target_second).checked_sub(current_second)?;
+                    Some((date, remaining))
+                })
+                .filter(|(_, remaining)| *remaining > 0)
+                .min_by_key(|(_, remaining)| *remaining)
+                .map(|(date, remaining)| (date, remaining * 1000));
+        }
+        (0..=7).find_map(|days| {
+            let weekday = (local.weekday as u8 + days) % 7;
+            if self.weekday_mask != 0 && self.weekday_mask & (1 << weekday) == 0 {
+                return None;
+            }
+            let remaining = (days as u64 * 86_400 + target_second).checked_sub(current_second)?;
+            (remaining > 0).then_some((today + days as u64, remaining * 1000))
+        })
+    }
+
+    /// Elapsed wall-clock milliseconds after this selected date's window end.
+    /// Returns `None` before the end, on another selected date, or for invalid seconds.
+    pub fn elapsed_after_end(&self, local: &CivilTime, second: u8) -> Option<u64> {
+        if second >= 60 {
+            return None;
+        }
+        if self.end_minute == 24 * 60 {
+            if self.matches(local) {
+                return None;
+            }
+            let previous = previous_civil_day(*local)?;
+            return self
+                .matches(&previous)
+                .then(|| (u64::from(local.minute_of_day()) * 60 + u64::from(second)) * 1000);
+        }
+        if local.minute_of_day() < self.end_minute {
+            return None;
+        }
+        let inside = CivilTime {
+            hour: ((self.end_minute - 1) / 60) as u8,
+            minute: ((self.end_minute - 1) % 60) as u8,
+            ..*local
+        };
+        self.matches(&inside).then(|| {
+            (u64::from(local.minute_of_day() - self.end_minute) * 60 + u64::from(second)) * 1000
+        })
+    }
+
+    /// Parse optional weekday or date selectors and a same-date local time range.
+    pub fn parse(
+        days: Option<&str>,
+        dates: Option<&str>,
+        start: &str,
+        end: &str,
+    ) -> Result<Self, ScheduleError> {
+        let start_minute = clock_minute(start)?;
+        let end_minute = end_clock_minute(end)?;
+        let weekday_mask = parse_weekdays(days.unwrap_or(""))?;
+        let dates = parse_dates(dates.unwrap_or(""))?;
+        if start_minute >= end_minute || (weekday_mask != 0 && !dates.is_empty()) {
+            return Err(ScheduleError::Invalid);
+        }
+        Ok(Self {
+            start_minute,
+            end_minute,
+            weekday_mask,
+            dates,
+        })
+    }
+
+    /// Test whether this window selects the supplied local civil minute.
+    pub fn matches(&self, local: &CivilTime) -> bool {
+        local.minute_of_day() >= self.start_minute
+            && local.minute_of_day() < self.end_minute
+            && (self.weekday_mask == 0 || self.weekday_mask & (1 << local.weekday as u8) != 0)
+            && (self.dates.is_empty()
+                || self.dates.iter().any(|date| {
+                    date.year == local.year && date.month == local.month && date.day == local.day
+                }))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CivilDate {
+    year: u16,
+    month: u8,
+    day: u8,
+}
+
+impl CivilDate {
+    fn parse(text: &str) -> Result<Self, ScheduleError> {
+        let bytes = text.as_bytes();
+        if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+            return Err(ScheduleError::Invalid);
+        }
+        let date = Self {
+            year: parse_digits(&bytes[0..4])? as u16,
+            month: parse_digits(&bytes[5..7])? as u8,
+            day: parse_digits(&bytes[8..10])? as u8,
+        };
+        date.valid().then_some(date).ok_or(ScheduleError::Invalid)
+    }
+
+    fn valid(&self) -> bool {
+        (1..=9_999).contains(&self.year)
+            && self.month >= 1
+            && self.month <= 12
+            && self.day >= 1
+            && self.day <= month_days(self.year, self.month)
+    }
+
+    fn ordinal(&self) -> u64 {
+        let year = u64::from(self.year - 1);
+        let leap_days = year / 4 - year / 100 + year / 400;
+        let month_days: u64 = (1..self.month)
+            .map(|month| u64::from(month_days(self.year, month)))
+            .sum();
+        365 * year + leap_days + month_days + u64::from(self.day - 1)
+    }
+
+    fn weekday(&self) -> u8 {
+        ((self.ordinal() + 1) % 7) as u8
+    }
+}
+
+fn selected_weekdays(mask: u8) -> u8 {
+    if mask == 0 { 0x7f } else { mask }
+}
+
+fn parse_clock(text: &str) -> Result<(u8, u8), ScheduleError> {
+    let bytes = text.as_bytes();
+    if bytes.len() != 5 || bytes[2] != b':' {
+        return Err(ScheduleError::Invalid);
+    }
+    let hour = parse_digits(&bytes[..2])? as u8;
+    let minute = parse_digits(&bytes[3..])? as u8;
+    if minute >= 60 || hour >= 24 {
+        return Err(ScheduleError::Invalid);
+    }
+    Ok((hour, minute))
+}
+
+fn clock_minute(text: &str) -> Result<u16, ScheduleError> {
+    let (hour, minute) = parse_clock(text)?;
+    Ok(u16::from(hour) * 60 + u16::from(minute))
+}
+
+fn end_clock_minute(text: &str) -> Result<u16, ScheduleError> {
+    if text == "24:00" {
+        Ok(24 * 60)
+    } else {
+        clock_minute(text)
+    }
+}
+
+/// Check one inclusive start boundary.
+pub(crate) fn start_time_valid(text: &str) -> bool {
+    clock_minute(text).is_ok()
+}
+
+/// Check one exclusive end boundary.
+pub(crate) fn end_time_valid(text: &str) -> bool {
+    end_clock_minute(text).is_ok()
+}
+
+fn previous_civil_day(local: CivilTime) -> Option<CivilTime> {
+    let (year, month, day) = if local.day > 1 {
+        (local.year, local.month, local.day - 1)
+    } else if local.month > 1 {
+        let month = local.month - 1;
+        (local.year, month, month_days(local.year, month))
+    } else if local.year > 1 {
+        (local.year - 1, 12, 31)
+    } else {
+        return None;
+    };
+    let weekday = match local.weekday {
+        Weekday::Sunday => Weekday::Saturday,
+        Weekday::Monday => Weekday::Sunday,
+        Weekday::Tuesday => Weekday::Monday,
+        Weekday::Wednesday => Weekday::Tuesday,
+        Weekday::Thursday => Weekday::Wednesday,
+        Weekday::Friday => Weekday::Thursday,
+        Weekday::Saturday => Weekday::Friday,
+    };
+    Some(CivilTime {
+        year,
+        month,
+        day,
+        weekday,
+        hour: 23,
+        minute: 59,
+    })
+}
+
+fn parse_digits(bytes: &[u8]) -> Result<u32, ScheduleError> {
+    bytes.iter().try_fold(0_u32, |value, byte| {
+        byte.is_ascii_digit()
+            .then(|| value * 10 + u32::from(byte - b'0'))
+            .ok_or(ScheduleError::Invalid)
+    })
+}
+
+fn parse_weekdays(text: &str) -> Result<u8, ScheduleError> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(0);
+    }
+    text.split(',').try_fold(0_u8, |mask, term| {
+        let term = term.trim();
+        if term.is_empty() {
+            return Err(ScheduleError::Invalid);
+        }
+        let (first, last) = match term.split_once('-') {
+            Some((first, last)) if !last.contains('-') => {
+                (Weekday::parse(first.trim())?, Weekday::parse(last.trim())?)
+            }
+            Some(_) => return Err(ScheduleError::Invalid),
+            None => {
+                let weekday = Weekday::parse(term)?;
+                (weekday, weekday)
+            }
+        };
+        let mut updated = mask;
+        let mut day = first as u8;
+        loop {
+            updated |= 1 << day;
+            if day == last as u8 {
+                return Ok(updated);
+            }
+            day = (day + 1) % 7;
+        }
+    })
+}
+
+/// Check one optional weekday selector.
+pub(crate) fn weekday_selector_valid(text: &str) -> bool {
+    parse_weekdays(text).is_ok()
+}
+
+fn parse_dates(text: &str) -> Result<Vec<CivilDate>, ScheduleError> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(Vec::new());
+    }
+    let dates: Result<Vec<_>, _> = text
+        .split(',')
+        .map(|term| CivilDate::parse(term.trim()))
+        .collect();
+    let dates = dates?;
+    (dates.len() <= 64)
+        .then_some(dates)
+        .ok_or(ScheduleError::Invalid)
+}
+
+/// Check one optional bounded date selector.
+pub(crate) fn date_selector_valid(text: &str) -> bool {
+    parse_dates(text).is_ok()
+}
+
+fn month_days(year: u16, month: u8) -> u8 {
+    const DAYS: [u8; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    // CivilDate::valid checks the month range before calling this helper.
+    if month == 2 && leap_year(year) {
+        29
+    } else {
+        DAYS[usize::from(month - 1)]
+    }
+}
+
+fn leap_year(year: u16) -> bool {
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+}
+
+#[cfg(test)]
+#[path = "schedule/tests.rs"]
+mod tests;
