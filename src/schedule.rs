@@ -277,7 +277,7 @@ impl ScheduledWindow {
                 .filter_map(|date| {
                     let date = date.ordinal();
                     let days = date.checked_sub(today)?;
-                    // Valid years 1..=9999 bound this sum below 315_537_897_600 seconds.
+                    // Valid years 1..=9999 bound this sum to at most 315_537_897_600 seconds.
                     let remaining = (days * 86_400 + target_second).checked_sub(current_second)?;
                     Some((date, remaining))
                 })
