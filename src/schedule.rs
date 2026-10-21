@@ -525,5 +525,6 @@ fn leap_year(year: u16) -> bool {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
 #[path = "schedule/tests.rs"]
 mod tests;

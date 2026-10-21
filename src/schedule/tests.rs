@@ -88,6 +88,12 @@ fn elapsed_end_time_crosses_calendar_boundaries() {
 fn elapsed_end_uses_the_most_recent_selected_occurrence() {
     let cases = [
         (
+            None,
+            None,
+            CivilTime::new(2026, 9, 15, Weekday::Tuesday, 0, 1).unwrap(),
+            Some(120_000),
+        ),
+        (
             Some("Monday"),
             None,
             CivilTime::new(2026, 9, 15, Weekday::Tuesday, 0, 1).unwrap(),
