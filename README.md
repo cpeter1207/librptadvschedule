@@ -6,6 +6,11 @@ Callers supply the civil minute and second; this library owns neither clocks
 nor controller actions. Optional selectors and results use explicit presence
 flags. The end of each bounded same-date window is exclusive.
 
+Elapsed-end results measure civil milliseconds since the most recent selected
+window ended, including across midnight and unselected calendar days. Active
+windows, times before every selected end, and invalid seconds have no result.
+This correction preserves ABI 1 and the existing SONAME.
+
 The parser, calculations, and calendar tests originate from
 `rpt_advanced` commit `c63db09`,
 `rust/core/src/schedule.rs` and `rust/core/src/schedule/tests.rs`. The

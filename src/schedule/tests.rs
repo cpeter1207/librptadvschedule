@@ -53,7 +53,7 @@ fn windows_accept_midnight_only_as_an_exclusive_end() {
 }
 
 #[test]
-fn midnight_end_elapsed_time_crosses_calendar_boundaries() {
+fn elapsed_end_time_crosses_calendar_boundaries() {
     let cases = [
         (
             Some("Monday"),
@@ -77,31 +77,97 @@ fn midnight_end_elapsed_time_crosses_calendar_boundaries() {
         ),
     ];
     for (days, dates, current) in cases {
-        let window = ScheduledWindow::parse(days, dates, "23:00", "24:00").unwrap();
-        assert_eq!(window.elapsed_after_end(&current, 7), Some(307_000));
+        for (end, elapsed) in [("23:59", 367_000), ("24:00", 307_000)] {
+            let window = ScheduledWindow::parse(days, dates, "23:00", end).unwrap();
+            assert_eq!(window.elapsed_after_end(&current, 7), Some(elapsed));
+        }
     }
 }
 
 #[test]
-fn previous_calendar_day_handles_each_weekday_and_the_minimum_year() {
-    use super::previous_civil_day;
-    for (weekday, previous) in [
-        (Weekday::Sunday, Weekday::Saturday),
-        (Weekday::Monday, Weekday::Sunday),
-        (Weekday::Tuesday, Weekday::Monday),
-        (Weekday::Wednesday, Weekday::Tuesday),
-        (Weekday::Thursday, Weekday::Wednesday),
-        (Weekday::Friday, Weekday::Thursday),
-        (Weekday::Saturday, Weekday::Friday),
-    ] {
-        let day = CivilTime::new(2026, 9, 15, weekday, 0, 0).unwrap();
+fn elapsed_end_uses_the_most_recent_selected_occurrence() {
+    let cases = [
+        (
+            Some("Monday"),
+            None,
+            CivilTime::new(2026, 9, 15, Weekday::Tuesday, 0, 1).unwrap(),
+            Some(120_000),
+        ),
+        (
+            Some("Friday"),
+            None,
+            CivilTime::new(2026, 9, 20, Weekday::Sunday, 0, 1).unwrap(),
+            Some(86_520_000),
+        ),
+        (
+            Some("Monday"),
+            None,
+            CivilTime::new(2026, 9, 21, Weekday::Monday, 22, 59).unwrap(),
+            Some(601_200_000),
+        ),
+        (
+            Some("Friday,Monday"),
+            None,
+            CivilTime::new(2026, 9, 15, Weekday::Tuesday, 0, 1).unwrap(),
+            Some(120_000),
+        ),
+        (
+            None,
+            Some("2026-09-14,2026-09-11,2026-09-18"),
+            CivilTime::new(2026, 9, 15, Weekday::Tuesday, 0, 1).unwrap(),
+            Some(120_000),
+        ),
+        (
+            None,
+            Some("2026-09-11"),
+            CivilTime::new(2026, 9, 15, Weekday::Tuesday, 0, 1).unwrap(),
+            Some(259_320_000),
+        ),
+        (
+            None,
+            Some("2026-09-18"),
+            CivilTime::new(2026, 9, 15, Weekday::Tuesday, 0, 1).unwrap(),
+            None,
+        ),
+        (
+            Some("Sunday"),
+            None,
+            CivilTime::new(1, 1, 1, Weekday::Monday, 0, 1).unwrap(),
+            None,
+        ),
+        (
+            Some("Monday"),
+            None,
+            CivilTime::new(1, 1, 1, Weekday::Monday, 23, 59).unwrap(),
+            Some(0),
+        ),
+        (
+            None,
+            Some("9999-12-30"),
+            CivilTime::new(9999, 12, 31, Weekday::Friday, 0, 1).unwrap(),
+            Some(120_000),
+        ),
+    ];
+    for (days, dates, current, expected) in cases {
+        let window = ScheduledWindow::parse(days, dates, "23:00", "23:59").unwrap();
         assert_eq!(
-            previous_civil_day(day),
-            Some(CivilTime::new(2026, 9, 14, previous, 23, 59).unwrap())
+            window.elapsed_after_end(&current, 0),
+            expected,
+            "days={days:?} dates={dates:?} current={current:?}"
         );
+        assert_eq!(window.elapsed_after_end(&current, 60), None);
     }
-    let minimum = CivilTime::new(1, 1, 1, Weekday::Monday, 0, 0).unwrap();
-    assert_eq!(previous_civil_day(minimum), None);
+}
+
+#[test]
+fn elapsed_end_does_not_select_history_while_the_current_window_is_active() {
+    let current = CivilTime::new(2026, 9, 15, Weekday::Tuesday, 23, 0).unwrap();
+    for end in ["23:59", "24:00"] {
+        for dates in [None, Some("2026-09-14,2026-09-15")] {
+            let window = ScheduledWindow::parse(None, dates, "23:00", end).unwrap();
+            assert_eq!(window.elapsed_after_end(&current, 0), None);
+        }
+    }
 }
 
 #[test]

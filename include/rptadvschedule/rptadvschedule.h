@@ -97,7 +97,9 @@ struct rptadv_schedule_descriptor {
   int32_t (*window_overlaps)(const struct rptadv_schedule_window *left,
                              const struct rptadv_schedule_window *right,
                              uint32_t *overlaps);
-  /** @brief Return elapsed milliseconds after a selected exclusive end.
+  /** @brief Return civil milliseconds since the most recent selected exclusive end.
+   * Searches preceding selected weekdays or dates, regardless of midnight.
+   * Active windows and times before every selected end produce present=0.
    * @param second Local second, zero through 59; 60 produces present=0.
    * @param present Receives 1 if elapsed is meaningful, otherwise 0.
    * @param elapsed Receives milliseconds or zero when absent.
