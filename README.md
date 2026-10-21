@@ -20,4 +20,4 @@ The moved calculations retain Sunday-zero weekdays, date limits, and the
 
 Build and test through the repository's `Makefile`; the public contract is
 `include/rptadvschedule/rptadvschedule.h`. The SONAME is
-`librptadvschedule.so.1`, and the first release is `0.1.0-alpha.1`.
+`librptadvschedule.so.1`, and the current release is `0.1.0-alpha.2`.

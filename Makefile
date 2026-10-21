@@ -14,7 +14,7 @@ PKG_CONFIG ?= pkg-config
 
 PACKAGE := librptadvschedule
 CRATE := rptadvschedule
-PACKAGE_VERSION ?= 0.1.0-alpha.1
+PACKAGE_VERSION ?= 0.1.0-alpha.2
 SOVERSION := 1
 PREFIX ?= /usr/local
 DESTDIR ?=

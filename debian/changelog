@@ -1,3 +1,10 @@
+librptadvschedule (0.1.0~alpha2-1) unstable; urgency=medium
+
+  * Retain the most recent selected window end across midnight and unselected days.
+  * Preserve ABI 1 and the existing shared-library SONAME.
+
+ -- Chris Peterson <cpeter1207@users.noreply.github.com>  Wed, 21 Oct 2026 16:10:53 -0500
+
 librptadvschedule (0.1.0~alpha1-1) unstable; urgency=medium
 
   * Initial generic civil scheduling descriptor and Debian packages.
