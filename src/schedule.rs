@@ -295,31 +295,36 @@ impl ScheduledWindow {
         })
     }
 
-    /// Elapsed wall-clock milliseconds after this selected date's window end.
-    /// Returns `None` before the end, on another selected date, or for invalid seconds.
+    /// Elapsed civil milliseconds since the most recent selected exclusive end.
+    /// Searches selected weekdays or dates, including preceding calendar dates.
+    /// Returns `None` inside an active window, before any selected end, or for invalid seconds.
     pub fn elapsed_after_end(&self, local: &CivilTime, second: u8) -> Option<u64> {
-        if second >= 60 {
+        if second >= 60 || self.matches(local) {
             return None;
         }
-        if self.end_minute == 24 * 60 {
-            if self.matches(local) {
+        let today = local.date_ordinal();
+        let current_second = u64::from(local.minute_of_day()) * 60 + u64::from(second);
+        let end_second = u64::from(self.end_minute) * 60;
+        let elapsed = |days: u64| {
+            // Valid years 1..=9999 bound this sum to at most 315_537_897_599 seconds.
+            (days * 86_400 + current_second)
+                .checked_sub(end_second)
+                .map(|seconds| seconds * 1000)
+        };
+        if !self.dates.is_empty() {
+            return self
+                .dates
+                .iter()
+                .filter_map(|date| elapsed(today.checked_sub(date.ordinal())?))
+                .min();
+        }
+        (0..=7).find_map(|days| {
+            today.checked_sub(days)?;
+            let weekday = (local.weekday as u64 + 7 - days) % 7;
+            if self.weekday_mask != 0 && self.weekday_mask & (1 << weekday) == 0 {
                 return None;
             }
-            let previous = previous_civil_day(*local)?;
-            return self
-                .matches(&previous)
-                .then(|| (u64::from(local.minute_of_day()) * 60 + u64::from(second)) * 1000);
-        }
-        if local.minute_of_day() < self.end_minute {
-            return None;
-        }
-        let inside = CivilTime {
-            hour: ((self.end_minute - 1) / 60) as u8,
-            minute: ((self.end_minute - 1) % 60) as u8,
-            ..*local
-        };
-        self.matches(&inside).then(|| {
-            (u64::from(local.minute_of_day() - self.end_minute) * 60 + u64::from(second)) * 1000
+            elapsed(days)
         })
     }
 
@@ -440,36 +445,6 @@ pub(crate) fn end_time_valid(text: &str) -> bool {
     end_clock_minute(text).is_ok()
 }
 
-fn previous_civil_day(local: CivilTime) -> Option<CivilTime> {
-    let (year, month, day) = if local.day > 1 {
-        (local.year, local.month, local.day - 1)
-    } else if local.month > 1 {
-        let month = local.month - 1;
-        (local.year, month, month_days(local.year, month))
-    } else if local.year > 1 {
-        (local.year - 1, 12, 31)
-    } else {
-        return None;
-    };
-    let weekday = match local.weekday {
-        Weekday::Sunday => Weekday::Saturday,
-        Weekday::Monday => Weekday::Sunday,
-        Weekday::Tuesday => Weekday::Monday,
-        Weekday::Wednesday => Weekday::Tuesday,
-        Weekday::Thursday => Weekday::Wednesday,
-        Weekday::Friday => Weekday::Thursday,
-        Weekday::Saturday => Weekday::Friday,
-    };
-    Some(CivilTime {
-        year,
-        month,
-        day,
-        weekday,
-        hour: 23,
-        minute: 59,
-    })
-}
-
 fn parse_digits(bytes: &[u8]) -> Result<u32, ScheduleError> {
     bytes.iter().try_fold(0_u32, |value, byte| {
         byte.is_ascii_digit()
@@ -550,5 +525,6 @@ fn leap_year(year: u16) -> bool {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
 #[path = "schedule/tests.rs"]
 mod tests;

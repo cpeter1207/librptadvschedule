@@ -167,38 +167,52 @@ fn selectors_preserve_none_empty_and_calendar_intersections() {
 }
 
 #[test]
-fn midnight_end_seconds_and_boundary_order_match_original() {
-    let original = ScheduledWindow::parse(Some("Monday"), None, "23:00", "24:00").unwrap();
-    let shared = window(Some("Monday"), None, "23:00", "24:00");
-    let midnight = civil(2026, 9, 15, 2, 0, 0);
-    let original_midnight = CivilTime::new(2026, 9, 15, Weekday::Tuesday, 0, 0).unwrap();
-    for second in [0, 59, 60] {
-        let mut present = 9;
-        let mut elapsed = 9;
-        assert_eq!(
-            unsafe {
-                (api().window_elapsed_after_end)(
-                    shared,
-                    &midnight,
-                    second,
-                    &mut present,
-                    &mut elapsed,
-                )
-            },
-            0
-        );
-        assert_eq!(
-            (present != 0).then_some(elapsed),
-            original.elapsed_after_end(&original_midnight, second)
-        );
-        assert_eq!(
-            boundary(api().window_next_start, shared, &midnight, second),
-            original.next_start(&original_midnight, second)
-        );
-        assert_eq!(
-            boundary(api().window_next_end, shared, &midnight, second),
-            original.next_end(&original_midnight, second)
-        );
+fn elapsed_end_seconds_and_boundary_order_preserve_the_abi() {
+    let midnight = civil(2026, 9, 15, 2, 0, 1);
+    let original_midnight = CivilTime::new(2026, 9, 15, Weekday::Tuesday, 0, 1).unwrap();
+    for (end, cases) in [
+        (
+            "23:59",
+            [(0, Some(120_000)), (59, Some(179_000)), (60, None)],
+        ),
+        (
+            "24:00",
+            [(0, Some(60_000)), (59, Some(119_000)), (60, None)],
+        ),
+    ] {
+        let original = ScheduledWindow::parse(Some("Monday"), None, "23:00", end).unwrap();
+        let shared = window(Some("Monday"), None, "23:00", end);
+        for (second, expected) in cases {
+            let mut present = 9;
+            let mut elapsed = 9;
+            assert_eq!(
+                unsafe {
+                    (api().window_elapsed_after_end)(
+                        shared,
+                        &midnight,
+                        second,
+                        &mut present,
+                        &mut elapsed,
+                    )
+                },
+                0
+            );
+            assert_eq!((present != 0).then_some(elapsed), expected);
+            assert_eq!(elapsed, expected.unwrap_or(0));
+            assert_eq!(
+                original.elapsed_after_end(&original_midnight, second),
+                expected
+            );
+            assert_eq!(
+                boundary(api().window_next_start, shared, &midnight, second),
+                original.next_start(&original_midnight, second)
+            );
+            assert_eq!(
+                boundary(api().window_next_end, shared, &midnight, second),
+                original.next_end(&original_midnight, second)
+            );
+        }
+        unsafe { (api().window_destroy)(shared) };
     }
     let selected = window(None, Some("2028-02-29,2026-09-18"), "12:00", "13:00");
     let now = civil(2026, 9, 15, 2, 11, 0);
@@ -218,7 +232,6 @@ fn midnight_end_seconds_and_boundary_order_match_original() {
     assert_eq!(start.0, end.0);
     assert_eq!(end.1 - start.1, 3_600_000);
     unsafe {
-        (api().window_destroy)(shared);
         (api().window_destroy)(selected);
     }
 }
