@@ -3,6 +3,7 @@
 #![deny(warnings)]
 #![cfg_attr(coverage, feature(coverage_attribute))]
 
+mod recurrence;
 pub mod schedule;
 
 use schedule::{CivilTime, ScheduledEvent, ScheduledWindow, Weekday};

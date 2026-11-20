@@ -4,8 +4,8 @@ FROM ${BASE_IMAGE}
 
 ARG TARGETARCH
 ARG RUSTUP_INIT_VERSION=1.28.2
-ARG RUST_STABLE=1.85.0
-ARG RUST_NIGHTLY=nightly-2025-02-20
+ARG RUST_STABLE=1.93.0
+ARG RUST_NIGHTLY=nightly-2026-01-25
 ARG CARGO_LLVM_COV_VERSION=0.6.21
 
 ENV RUSTUP_HOME=/opt/rustup
@@ -13,7 +13,7 @@ ENV CARGO_HOME=/opt/cargo
 ENV PATH=/opt/cargo/bin:${PATH}
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-		ca-certificates cargo curl debhelper dpkg-dev pkg-config rustc && \
+		ca-certificates cargo curl debhelper dpkg-dev pkg-config rustc tzdata && \
 	rm -rf /var/lib/apt/lists/*
 
 RUN case "${TARGETARCH}" in \
