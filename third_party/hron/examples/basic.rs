@@ -1,0 +1,29 @@
+use hron::Schedule;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let schedule: Schedule = "every weekday at 09:00 in UTC".parse()?;
+    println!("Parsed: {schedule}");
+
+    let now: jiff::Zoned = "2025-06-15T08:00:00+00:00[UTC]".parse()?;
+    if let Some(next) = schedule.next_from(&now) {
+        println!("Next occurrence after {now}: {next}");
+    }
+
+    let next_5 = schedule.next_n_from(&now, 5);
+    println!("\nNext 5 occurrences:");
+    for dt in &next_5 {
+        println!("  {dt}");
+    }
+
+    let monday_9am: jiff::Zoned = "2025-06-16T09:00:00+00:00[UTC]".parse()?;
+    println!("\n{monday_9am} matches: {}", schedule.matches(&monday_9am));
+
+    let sunday_9am: jiff::Zoned = "2025-06-15T09:00:00+00:00[UTC]".parse()?;
+    println!("{sunday_9am} matches: {}", schedule.matches(&sunday_9am));
+
+    let roundtripped: Schedule = schedule.to_string().parse()?;
+    assert_eq!(schedule.to_string(), roundtripped.to_string());
+    println!("\nRoundtrip: {roundtripped}");
+
+    Ok(())
+}

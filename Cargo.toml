@@ -1,12 +1,19 @@
 [package]
 name = "librptadvschedule"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.93"
 license = "GPL-2.0-only"
 description = "Portable civil scheduling ABI for rpt_advanced"
 repository = "https://github.com/cpeter1207/librptadvschedule"
 publish = false
+
+[dependencies]
+hron = { version = "=2.2.1", default-features = false }
+jiff = "=0.2.37"
+
+[patch.crates-io]
+hron = { path = "third_party/hron" }
 
 [lib]
 name = "rptadvschedule"

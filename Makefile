@@ -14,7 +14,7 @@ PKG_CONFIG ?= pkg-config
 
 PACKAGE := librptadvschedule
 CRATE := rptadvschedule
-PACKAGE_VERSION ?= 0.1.0-alpha.2
+PACKAGE_VERSION ?= 0.1.0-alpha.3
 SOVERSION := 1
 PREFIX ?= /usr/local
 DESTDIR ?=
@@ -26,12 +26,12 @@ TARGET_LIBRARY := $(TARGET_RELEASE)/$(LIBRARY_BASENAME).so
 LIBRARY_VERSIONED := build/$(LIBRARY_BASENAME).so.$(SOVERSION).$(PACKAGE_VERSION)
 LIBRARY_SONAME := build/$(LIBRARY_BASENAME).so.$(SOVERSION)
 LIBRARY_LINK := build/$(LIBRARY_BASENAME).so
-HEADER := include/rptadvschedule/rptadvschedule.h
-RUST_SOURCES := $(wildcard src/*.rs)
+HEADERS := $(wildcard include/rptadvschedule/*.h)
+RUST_SOURCES := $(wildcard src/*.rs src/*/*.rs third_party/hron/src/*.rs third_party/hron/src/eval/*.rs)
 PC_TEMPLATE := rptadvschedule.pc.in
 PC_FILE := build/rptadvschedule.pc
-C_SMOKE_SOURCE := tests/descriptor_smoke.c
-C_SMOKE_BINARY := build/descriptor-smoke
+C_SMOKE_SOURCES := tests/descriptor_smoke.c tests/recurrence_smoke.c
+C_SMOKE_BINARIES := $(patsubst tests/%.c,build/%,$(C_SMOKE_SOURCES))
 DEBIAN_VERSION = $(shell dpkg-parsechangelog -S Version)
 DEBIAN_ARCH = $(shell dpkg-architecture -qDEB_HOST_ARCH)
 DEBIAN_MULTIARCH = $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
@@ -40,11 +40,11 @@ DEBIAN_OUTPUT_DIR = $(abspath $(DEBIAN_SOURCE_PARENT))
 DEBIAN_RUNTIME_DEB = $(DEBIAN_OUTPUT_DIR)/librptadvschedule$(SOVERSION)_$(DEBIAN_VERSION)_$(DEBIAN_ARCH).deb
 DEBIAN_DEV_DEB = $(DEBIAN_OUTPUT_DIR)/librptadvschedule-dev_$(DEBIAN_VERSION)_$(DEBIAN_ARCH).deb
 DEBIAN_STAGE = build/debian-package-stage
-COVERAGE_TOOLCHAIN ?= nightly-2025-02-20
+COVERAGE_TOOLCHAIN ?= nightly-2026-01-25
 COVERAGE_DIR = build/coverage
 COVERAGE_TARGET_DIR = build/llvm-cov-target
 COVERAGE_JSON = $(COVERAGE_DIR)/coverage.json
-COVERAGE_PRODUCTION_ROOT = $(CURDIR)/src
+COVERAGE_ENV = RUSTUP_TOOLCHAIN=$(COVERAGE_TOOLCHAIN) CARGO_LLVM_COV_TARGET_DIR=$(abspath $(COVERAGE_TARGET_DIR))
 QUALITY_BASE_IMAGE ?= ghcr.io/cpeter1207/rpt-advanced-quality-debian13:latest
 QUALITY_IMAGE ?= $(PACKAGE)-quality:local
 QUALITY_LAUNCHER = tools/run-in-quality-container.sh
@@ -82,13 +82,16 @@ $(PC_FILE): $(PC_TEMPLATE) FORCE | build
 quality: lint static-analysis docs
 
 lint:
+	$(PYTHON) tests/coverage_audit.py
 	$(CARGO_FMT) --check
+	rustfmt --check --edition 2021 third_party/hron/src/eval/captured.rs
 	$(SHELLCHECK) tools/run-in-quality-container.sh
 
 static-analysis:
 	$(CARGO_CLIPPY) --all-targets --all-features -- -D warnings
+	$(CARGO_CLIPPY) -p hron --lib --locked -- -D warnings
 	$(CPPCHECK) --force --enable=warning,style,performance,portability \
-		--error-exitcode=1 --std=c11 -Iinclude $(C_SMOKE_SOURCE)
+		--error-exitcode=1 --std=c11 -Iinclude $(C_SMOKE_SOURCES)
 
 docs: rustdoc | build
 	$(DOXYGEN) Doxyfile
@@ -99,10 +102,10 @@ rustdoc:
 
 test:
 	$(CARGO) test --all-targets --locked
-	$(MAKE) $(C_SMOKE_BINARY)
-	./$(C_SMOKE_BINARY)
+	$(MAKE) $(C_SMOKE_BINARIES)
+	set -e; for smoke in $(C_SMOKE_BINARIES); do ./$$smoke; done
 
-$(C_SMOKE_BINARY): $(C_SMOKE_SOURCE) $(HEADER) $(LIBRARY_LINK) | build
+$(C_SMOKE_BINARIES): build/%: tests/%.c $(HEADERS) $(LIBRARY_LINK) | build
 	$(CC) -std=c11 -Wall -Wextra -Werror -Iinclude $< -Lbuild \
 		-l$(CRATE) -Wl,-rpath,'$$ORIGIN' -o $@
 
@@ -111,9 +114,9 @@ $(C_SMOKE_BINARY): $(C_SMOKE_SOURCE) $(HEADER) $(LIBRARY_LINK) | build
 coverage:
 	rm -rf $(COVERAGE_DIR) $(COVERAGE_TARGET_DIR)
 	mkdir -p $(COVERAGE_DIR)
-	RUSTUP_TOOLCHAIN=$(COVERAGE_TOOLCHAIN) CARGO_LLVM_COV_TARGET_DIR=$(abspath $(COVERAGE_TARGET_DIR)) \
-		$(CARGO_LLVM_COV) --all-targets --locked --branch --json --output-path $(COVERAGE_JSON)
-	$(PYTHON) -c 'import json, os, sys; report=json.load(open(sys.argv[1], encoding="utf-8")); root=os.path.realpath(sys.argv[2]); files={}; [files.setdefault(path, entry["summary"]) for datum in report.get("data", []) for entry in datum.get("files", []) for path in (os.path.realpath(entry["filename"]),) if os.path.commonpath((root,path)) == root and "{}tests{}".format(os.path.sep,os.path.sep) not in path]; failures=[(path,metric,summary.get(metric,{})) for path,summary in sorted(files.items()) for metric in ("lines","branches") if not isinstance(summary.get(metric),dict) or summary[metric].get("covered") != summary[metric].get("count")]; print("verified production coverage for {} source files".format(len(files))); [print("{}: {} {}/{}".format(path,metric,values.get("covered","missing"),values.get("count","missing")),file=sys.stderr) for path,metric,values in failures]; raise SystemExit(1 if not files or failures else 0)' $(COVERAGE_JSON) $(COVERAGE_PRODUCTION_ROOT)
+	$(COVERAGE_ENV) $(CARGO_LLVM_COV) --all-targets --locked --branch --json --output-path $(COVERAGE_JSON)
+	$(COVERAGE_ENV) $(CARGO_LLVM_COV) report --lcov --output-path $(COVERAGE_DIR)/coverage.lcov
+	$(PYTHON) tools/check-coverage.py $(COVERAGE_DIR)
 
 quality-image:
 	docker image pull $(QUALITY_BASE_IMAGE)
@@ -129,7 +132,7 @@ install: all $(PC_FILE)
 	install -m 0755 $(LIBRARY_VERSIONED) $(DESTDIR)$(LIBDIR)/
 	ln -sf $(notdir $(LIBRARY_VERSIONED)) $(DESTDIR)$(LIBDIR)/$(notdir $(LIBRARY_SONAME))
 	ln -sf $(notdir $(LIBRARY_SONAME)) $(DESTDIR)$(LIBDIR)/$(notdir $(LIBRARY_LINK))
-	install -m 0644 $(HEADER) $(DESTDIR)$(PREFIX)/include/rptadvschedule/
+	install -m 0644 $(HEADERS) $(DESTDIR)$(PREFIX)/include/rptadvschedule/
 	install -m 0644 $(PC_FILE) $(DESTDIR)$(LIBDIR)/pkgconfig/
 
 install-check: all
@@ -141,14 +144,20 @@ install-check: all
 	test ! -e build/stage/usr/lib/$(LIBRARY_BASENAME).a
 	$(READELF) -d build/stage/usr/lib/$(notdir $(LIBRARY_VERSIONED)) | grep -F '$(LIBRARY_BASENAME).so.$(SOVERSION)'
 	! $(READELF) -d build/stage/usr/lib/$(notdir $(LIBRARY_VERSIONED)) | grep -E 'res_usbradio.so|libportaudio.so|libasound.so|libhamlib.so|libavfilter.so'
-	test -f build/stage/usr/include/rptadvschedule/$(notdir $(HEADER))
+	set -e; for header in $(notdir $(HEADERS)); do test -f build/stage/usr/include/rptadvschedule/$$header; done
 	test -f build/stage/usr/lib/pkgconfig/rptadvschedule.pc
 	test "$$(PKG_CONFIG_PATH=$(CURDIR)/build/stage/usr/lib/pkgconfig $(PKG_CONFIG) --variable=abi_version rptadvschedule)" = '$(SOVERSION)'
-	PKG_CONFIG_PATH=$(CURDIR)/build/stage/usr/lib/pkgconfig \
-		PKG_CONFIG_SYSROOT_DIR=$(CURDIR)/build/stage $(CC) -std=c11 -Wall -Wextra -Werror \
-		$(C_SMOKE_SOURCE) $$(PKG_CONFIG_PATH=$(CURDIR)/build/stage/usr/lib/pkgconfig PKG_CONFIG_SYSROOT_DIR=$(CURDIR)/build/stage $(PKG_CONFIG) --cflags --libs rptadvschedule) \
-		-Wl,-rpath,$(CURDIR)/build/stage/usr/lib -o build/stage/descriptor-smoke
-	LD_LIBRARY_PATH="$(CURDIR)/build/stage/usr/lib:$$LD_LIBRARY_PATH" build/stage/descriptor-smoke
+	test "$$(PKG_CONFIG_PATH=$(CURDIR)/build/stage/usr/lib/pkgconfig $(PKG_CONFIG) --variable=recurrence_abi_version rptadvschedule)" = '1'
+	$(MAKE) staged-smoke STAGE=$(CURDIR)/build/stage STAGE_LIBDIR=/usr/lib
+
+.PHONY: staged-smoke
+staged-smoke:
+	export PKG_CONFIG_PATH="$(STAGE)$(STAGE_LIBDIR)/pkgconfig" PKG_CONFIG_SYSROOT_DIR="$(STAGE)"; \
+	set -e; for source in $(C_SMOKE_SOURCES); do \
+		binary="$(STAGE)/$$(basename "$$source" .c)"; \
+		$(CC) -std=c11 -Wall -Wextra -Werror "$$source" $$($(PKG_CONFIG) --cflags --libs rptadvschedule) -o "$$binary"; \
+		LD_LIBRARY_PATH="$(STAGE)$(STAGE_LIBDIR):$$LD_LIBRARY_PATH" "$$binary"; \
+	done
 
 debian-package-check: dist
 	rm -rf $(DEBIAN_SOURCE_PARENT) $(DEBIAN_STAGE)
@@ -173,11 +182,7 @@ debian-package-check: dist
 	test -L "$(DEBIAN_STAGE)/usr/lib/$(DEBIAN_MULTIARCH)/$(LIBRARY_BASENAME).so"
 	$(READELF) -d "$(DEBIAN_STAGE)/usr/lib/$(DEBIAN_MULTIARCH)/$(LIBRARY_BASENAME).so.$(SOVERSION)" | grep -F '$(LIBRARY_BASENAME).so.$(SOVERSION)'
 	! $(READELF) -d "$(DEBIAN_STAGE)/usr/lib/$(DEBIAN_MULTIARCH)/$(LIBRARY_BASENAME).so.$(SOVERSION)" | grep -E 'res_usbradio.so|libportaudio.so|libasound.so|libhamlib.so|libavfilter.so'
-	PKG_CONFIG_PATH=$(CURDIR)/$(DEBIAN_STAGE)/usr/lib/$(DEBIAN_MULTIARCH)/pkgconfig \
-		PKG_CONFIG_SYSROOT_DIR=$(CURDIR)/$(DEBIAN_STAGE) $(CC) -std=c11 -Wall -Wextra -Werror \
-		$(C_SMOKE_SOURCE) $$(PKG_CONFIG_PATH=$(CURDIR)/$(DEBIAN_STAGE)/usr/lib/$(DEBIAN_MULTIARCH)/pkgconfig PKG_CONFIG_SYSROOT_DIR=$(CURDIR)/$(DEBIAN_STAGE) $(PKG_CONFIG) --cflags --libs rptadvschedule) \
-		-Wl,-rpath,$(CURDIR)/$(DEBIAN_STAGE)/usr/lib/$(DEBIAN_MULTIARCH) -o $(DEBIAN_STAGE)/descriptor-smoke
-	LD_LIBRARY_PATH="$(CURDIR)/$(DEBIAN_STAGE)/usr/lib/$(DEBIAN_MULTIARCH):$$LD_LIBRARY_PATH" $(DEBIAN_STAGE)/descriptor-smoke
+	$(MAKE) staged-smoke STAGE=$(CURDIR)/$(DEBIAN_STAGE) STAGE_LIBDIR=/usr/lib/$(DEBIAN_MULTIARCH)
 
 dist: | build
 	rm -rf build/dist
@@ -189,7 +194,7 @@ dist: | build
 		--exclude='debian/*.substvars' --exclude='debian/*.debhelper.log' \
 		--transform='s|^|$(PACKAGE)-$(PACKAGE_VERSION)/|' -czf build/$(PACKAGE)-$(PACKAGE_VERSION).tar.gz \
 		.dockerignore AGENTS.md Cargo.lock Cargo.toml COPYING Doxyfile Makefile QUALITY.md README.md \
-		rptadvschedule.pc.in rust-toolchain.toml containers debian include src tests tools
+		rptadvschedule.pc.in rust-toolchain.toml containers debian include src tests third_party tools
 
 distcheck: dist
 	! tar -tzf build/$(PACKAGE)-$(PACKAGE_VERSION).tar.gz | \

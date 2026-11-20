@@ -2,6 +2,7 @@ prefix=@PREFIX@
 libdir=@LIBDIR@
 includedir=${prefix}/include
 abi_version=@ABI_VERSION@
+recurrence_abi_version=1
 
 Name: librptadvschedule
 Description: Generic local civil scheduling ABI for rpt_advanced

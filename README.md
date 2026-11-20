@@ -18,6 +18,8 @@ The parser, calculations, and calendar tests originate from
 The moved calculations retain Sunday-zero weekdays, date limits, and the
 `(date identity, remaining milliseconds)` next-boundary result.
 
-Build and test through the repository's `Makefile`; the public contract is
-`include/rptadvschedule/rptadvschedule.h`. The SONAME is
-`librptadvschedule.so.1`, and the current release is `0.1.0-alpha.2`.
+The alpha.3 source adds an independent hron recurrence table for captured Unix
+seconds. The two C contracts are `include/rptadvschedule/rptadvschedule.h`
+and `include/rptadvschedule/recurrence.h`. Both use the existing
+`librptadvschedule.so.1` SONAME. See `QUALITY.md` for the timezone, search
+and build contracts. Build and test through the repository's `Makefile`.
